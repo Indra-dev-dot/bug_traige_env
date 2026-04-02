@@ -1,0 +1,22 @@
+name: bug-triage-env
+version: "0.1.0"
+description: >
+  A real-world RL environment where agents learn to triage
+  software bug reports. 3 tasks of increasing difficulty:
+  severity classification (easy), duplicate detection (medium),
+  and full triage report (hard).
+author: your-hf-username
+tags:
+  - software-engineering
+  - bug-triage
+  - real-world
+  - nlp
+entry_point: server/app.py
+hf_space_sdk: docker
+tasks:
+  - id: severity_classification
+    difficulty: easy
+  - id: duplicate_detection
+    difficulty: medium
+  - id: full_triage
+    difficulty: hard
