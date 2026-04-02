@@ -125,15 +125,18 @@ def get_tasks():
 @app.get("/grader")
 def get_grader_score():
     """Return grader score for the most recently completed episode."""
-    s = env.state()
-    return JSONResponse({
-        "episode_id": s["episode_id"],
-        "step_count": s["step_count"],
-        "cumulative_reward": s["cumulative_reward"],
-        "task_type": s["task_type"],
-        "last_reward": s["last_reward"],
-        "last_feedback": s["last_feedback"],
-    })
+    try:
+        s = env.state()
+        return JSONResponse({
+            "episode_id":        s.get("episode_id", ""),
+            "step_count":        s.get("step_count", 0),
+            "cumulative_reward": s.get("cumulative_reward", 0.0),
+            "task_type":         str(s.get("task_type", "")),
+            "last_reward":       s.get("last_reward", 0.0),
+            "last_feedback":     s.get("last_feedback", ""),
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/baseline")

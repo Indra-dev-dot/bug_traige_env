@@ -1,41 +1,17 @@
-"""
-server/environment.py — The core Bug Triage environment.
-
-This is the brain. OpenEnv calls these 3 methods:
-  reset()  → give the agent a fresh bug to triage
-  step()   → receive the agent's triage → score it → return reward
-  state()  → return episode metadata
-
-How one episode works:
-  1. reset() picks a task type + a bug report from the dataset
-  2. Agent calls step() with its triage decision
-  3. Grader scores it → reward returned
-  4. Agent gets up to max_steps attempts (can refine its triage)
-  5. done=True after max_steps or perfect score
-"""
-
 import random
 import uuid
 from typing import Optional
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from models import (
     TriageAction, TriageObservation, TriageStepResult,
-    TriageReward, TaskType, BugReport, Severity
+    TriageReward, TaskType, BugReport
 )
 from graders import grade_severity, grade_duplicate, grade_full_triage
 from data.bug_dataset import BUGS_WITH_LABELS, DUPLICATE_BUGS
-
-# OpenEnv base class
-try:
-    from openenv import Environment, State
-except ImportError:
-    # Fallback for local dev without openenv installed
-    class Environment:
-        pass
-    class State:
-        def __init__(self, **kwargs):
-            self.__dict__.update(kwargs)
-
 
 TASK_DESCRIPTIONS = {
     TaskType.SEVERITY_CLASSIFICATION: (
@@ -44,77 +20,72 @@ TASK_DESCRIPTIONS = {
         "P1 (major — core feature broken, no workaround), "
         "P2 (minor — feature broken but workaround exists), "
         "P3 (trivial — cosmetic or typo). "
-        "Set the 'severity' field in your action."
+        "Set the severity field in your action."
     ),
     TaskType.DUPLICATE_DETECTION: (
         "Read the new bug report. Compare it against the list of existing bugs. "
-        "If it's a duplicate, set 'duplicate_of' to the ID of the existing bug. "
-        "If it's NOT a duplicate, set 'duplicate_of' to 'none'. "
-        "Always provide 'similarity_reasoning' explaining your decision in one sentence."
+        "If it is a duplicate, set duplicate_of to the ID of the existing bug. "
+        "If it is NOT a duplicate, set duplicate_of to none. "
+        "Always provide similarity_reasoning explaining your decision."
     ),
     TaskType.FULL_TRIAGE: (
         "Perform a complete triage of this bug report. You must provide: "
-        "severity (P0–P3), assigned_team (backend/frontend/infra/security/data/mobile), "
-        "root_cause_hypothesis (your best technical guess at what's causing this), "
-        "reproduction_verified (true/false — do the steps make sense?), "
-        "priority_justification (1–2 sentences explaining your severity + team choice)."
+        "severity (P0-P3), assigned_team (backend/frontend/infra/security/data/mobile), "
+        "root_cause_hypothesis (your best technical guess), "
+        "reproduction_verified (true/false), "
+        "priority_justification (1-2 sentences explaining your choices)."
     ),
 }
 
 
-class BugTriageEnvironment(Environment):
+class BugTriageEnvironment:
     """
     Bug Triage OpenEnv environment.
 
-    Supports 3 tasks of increasing difficulty:
+    3 tasks of increasing difficulty:
       - severity_classification (easy)
       - duplicate_detection (medium)
       - full_triage (hard)
-
-    task_type can be set explicitly or left as None for random selection.
     """
 
     def __init__(self, task_type: Optional[TaskType] = None, max_steps: int = 3):
-        self.task_type = task_type           # None = random each episode
-        self.max_steps = max_steps
+        self.task_type  = task_type
+        self.max_steps  = max_steps
 
-        # Episode state — reset on each reset()
-        self._episode_id: Optional[str] = None
-        self._current_task: Optional[TaskType] = None
-        self._current_bug: Optional[BugReport] = None
-        self._current_bug_label: Optional[dict] = None
-        self._existing_bugs: list[BugReport] = []
-        self._step_count: int = 0
-        self._last_reward: float = 0.0
-        self._last_feedback: str = ""
-        self._cumulative_reward: float = 0.0
-
-    # ── OpenEnv required methods ──────────────────────────────────────────────
-
-    def reset(self) -> TriageObservation:
-        """Start a fresh episode. Pick a task + bug report."""
-        self._episode_id = str(uuid.uuid4())
-        self._step_count = 0
-        self._last_reward = 0.0
-        self._last_feedback = ""
+        self._episode_id        = None
+        self._current_task      = None
+        self._current_bug       = None
+        self._current_bug_label = None
+        self._existing_bugs     = []
+        self._step_count        = 0
+        self._last_reward       = 0.0
+        self._last_feedback     = ""
         self._cumulative_reward = 0.0
 
-        # Pick task type
+    # ── 3 required OpenEnv methods ────────────────────────────────────────────
+
+    def reset(self) -> TriageObservation:
+        """Start a fresh episode. Pick a task and a bug report."""
+        self._episode_id        = str(uuid.uuid4())
+        self._step_count        = 0
+        self._last_reward       = 0.0
+        self._last_feedback     = ""
+        self._cumulative_reward = 0.0
+
+        # Pick task type — random if not specified
         self._current_task = self.task_type or random.choice(list(TaskType))
 
         # Pick a bug based on task
         if self._current_task == TaskType.DUPLICATE_DETECTION:
-            entry = random.choice(DUPLICATE_BUGS)
-            self._current_bug = entry["new_bug"]
-            self._current_bug_label = {
-                "duplicate_id": entry["is_duplicate_of"]
-            }
-            self._existing_bugs = entry["ground_truth_pool"]
+            entry                   = random.choice(DUPLICATE_BUGS)
+            self._current_bug       = entry["new_bug"]
+            self._current_bug_label = {"duplicate_id": entry["is_duplicate_of"]}
+            self._existing_bugs     = [b["bug"] for b in BUGS_WITH_LABELS]
         else:
-            entry = random.choice(BUGS_WITH_LABELS)
-            self._current_bug = entry["bug"]
+            entry                   = random.choice(BUGS_WITH_LABELS)
+            self._current_bug       = entry["bug"]
             self._current_bug_label = entry["ground_truth"]
-            self._existing_bugs = []
+            self._existing_bugs     = []
 
         return TriageObservation(
             task_type=self._current_task,
@@ -128,16 +99,17 @@ class BugTriageEnvironment(Environment):
         )
 
     def step(self, action: TriageAction) -> TriageStepResult:
-        """Process the agent's triage action and return a scored result."""
+        """Receive agent action, grade it, return result."""
+        if self._current_bug is None:
+            raise ValueError("Call reset() before step().")
+
         self._step_count += 1
 
-        # Grade based on task type
-        reward_obj = self._grade(action)
-        self._last_reward = reward_obj.total
-        self._last_feedback = reward_obj.explanation
+        reward_obj              = self._grade(action)
+        self._last_reward       = reward_obj.total
+        self._last_feedback     = reward_obj.explanation
         self._cumulative_reward += reward_obj.total
 
-        # Done if max steps reached or perfect score
         done = (self._step_count >= self.max_steps) or (reward_obj.total >= 1.0)
 
         observation = TriageObservation(
@@ -158,25 +130,25 @@ class BugTriageEnvironment(Environment):
             done=done,
             info={
                 "episode_id": self._episode_id,
-                "step": self._step_count,
-                "task": self._current_task,
+                "step":       self._step_count,
+                "task":       self._current_task.value,
                 "cumulative_reward": round(self._cumulative_reward, 3),
             },
         )
 
-    def state(self) -> State:
+    def state(self) -> dict:
         """Return current episode metadata."""
-        return State(
-            episode_id=self._episode_id or "",
-            step_count=self._step_count,
-            metadata={
-                "task_type": self._current_task,
-                "bug_id": self._current_bug.id if self._current_bug else None,
-                "cumulative_reward": self._cumulative_reward,
-            },
-        )
+        return {
+            "episode_id":        self._episode_id or "",
+            "step_count":        self._step_count,
+            "task_type":         self._current_task.value if self._current_task else None,
+            "bug_id":            self._current_bug.id if self._current_bug else None,
+            "cumulative_reward": round(self._cumulative_reward, 3),
+            "last_reward":       self._last_reward,
+            "last_feedback":     self._last_feedback,
+        }
 
-    # ── Internal grading dispatch ─────────────────────────────────────────────
+    # ── Internal grading ──────────────────────────────────────────────────────
 
     def _grade(self, action: TriageAction) -> TriageReward:
         if self._current_task == TaskType.SEVERITY_CLASSIFICATION:
@@ -197,4 +169,7 @@ class BugTriageEnvironment(Environment):
                 bug=self._current_bug,
             )
         else:
-            return TriageReward(total=0.0, explanation="Unknown task type.")
+            return TriageReward(
+                total=0.0,
+                explanation="Unknown task type.",
+            )
