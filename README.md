@@ -2,7 +2,7 @@
 title: Bug Triage Env
 emoji: 🐛
 colorFrom: purple
-colorTo: teal
+colorTo: green
 sdk: docker
 pinned: false
 ---
