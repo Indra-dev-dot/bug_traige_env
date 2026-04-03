@@ -1,3 +1,11 @@
+---
+title: Bug Triage Env
+emoji: 🐛
+colorFrom: purple
+colorTo: teal
+sdk: docker
+pinned: false
+---
 # Bug Triage Environment
 
 A real-world OpenEnv environment where AI agents learn to triage
