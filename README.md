@@ -4,6 +4,7 @@ emoji: 🐛
 colorFrom: purple
 colorTo: green
 sdk: docker
+app_port: 7860
 pinned: false
 ---
 # Bug Triage Environment
