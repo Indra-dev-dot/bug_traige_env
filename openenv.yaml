@@ -5,7 +5,7 @@ description: >
   software bug reports. 3 tasks of increasing difficulty:
   severity classification (easy), duplicate detection (medium),
   and full triage report (hard).
-author: your-hf-username
+author: HadesnApollo
 tags:
   - software-engineering
   - bug-triage

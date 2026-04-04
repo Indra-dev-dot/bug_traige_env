@@ -24,25 +24,28 @@ def grade_severity(action: TriageAction, ground_truth_severity: Severity) -> Tri
 
     dist = severity_distance(action.severity, ground_truth_severity)
 
+    # Clean display values — no "Severity.P1", just "P1"
+    got      = action.severity.value
+    expected = ground_truth_severity.value
+
     if dist == 0:
-        score = 1.0
-        explanation = f"Correct. {action.severity} matches {ground_truth_severity}."
+        score       = 1.0
+        explanation = f"Correct. {got} matches {expected}."
     elif dist == 1:
-        score = 0.5
-        explanation = f"Off by one level. Got {action.severity}, expected {ground_truth_severity}."
+        score       = 0.5
+        explanation = f"Off by one level. Got {got}, expected {expected}."
     elif dist == 2:
-        score = 0.2
-        explanation = f"Off by two levels. Got {action.severity}, expected {ground_truth_severity}."
+        score       = 0.2
+        explanation = f"Off by two levels. Got {got}, expected {expected}."
     else:
-        score = 0.0
-        explanation = f"Completely wrong. Got {action.severity}, expected {ground_truth_severity}."
+        score       = 0.0
+        explanation = f"Completely wrong. Got {got}, expected {expected}."
 
     return TriageReward(
         total=round(score, 3),
         severity_score=round(score, 3),
         explanation=explanation,
     )
-
 
 # ── Task 2 — Duplicate Detection (Medium) ────────────────────────────────────
 
