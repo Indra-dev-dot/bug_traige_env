@@ -254,3 +254,10 @@ def _rule_based_action(obs):
             "Classified as P1 due to core feature impact with no workaround."
         ),
     )
+
+def main():
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
+
+if __name__ == "__main__":
+    main()
