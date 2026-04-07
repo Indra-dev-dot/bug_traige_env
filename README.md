@@ -93,3 +93,11 @@ OPENAI_API_KEY=your-key python3 baseline.py
 docker build -t bug-triage-env .
 docker run -p 8000:8000 bug-triage-env
 ```
+## Running Inference
+```bash
+export HF_TOKEN=your_token
+export API_BASE_URL=https://router.huggingface.co/v1
+export MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
+export ENV_URL=https://HadesnApollo-bug-triage-env.hf.space
+python3 inference.py
+```
