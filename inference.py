@@ -1,21 +1,27 @@
-"""
-inference.py — Bug Triage Environment Inference Script
-Follows the mandatory stdout format: [START], [STEP], [END]
-"""
-
 import os
 import json
+import urllib.request
 from typing import List, Optional
 from openai import OpenAI
 
-# ── Environment variables ─────────────────────────────────────────────────────
-API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+# ── Required environment variables ───────────────────────────────────────────
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-ENV_URL      = os.getenv("ENV_URL", "https://HadesnApollo-bug-triage-env.hf.space")
-BENCHMARK    = "bug-triage"
-MAX_STEPS    = 3
+HF_TOKEN     = os.getenv("HF_TOKEN")
+
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
+
+ENV_URL   = os.getenv("ENV_URL", "https://HadesnApollo-bug-triage-env.hf.space")
+BENCHMARK = "bug-triage"
+MAX_STEPS = 3
 SUCCESS_SCORE_THRESHOLD = 0.5
+
+# ── Initialize OpenAI client ──────────────────────────────────────────────────
+client = OpenAI(
+    base_url=API_BASE_URL,
+    api_key=HF_TOKEN,
+)
 
 # ── Mandatory log functions ───────────────────────────────────────────────────
 
@@ -32,21 +38,19 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
     )
 
 
-# ── HTTP helpers (no openenv-core needed) ─────────────────────────────────────
-
-import urllib.request
+# ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 def http_get(url: str) -> dict:
     req = urllib.request.Request(url)
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 
@@ -57,7 +61,7 @@ def http_post(url: str, data: dict = None) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 
@@ -68,11 +72,9 @@ You will receive a bug report and must classify it.
 Always respond with valid JSON only — no explanation, no markdown."""
 
 
-def get_llm_action(client: OpenAI, obs: dict) -> dict:
-    """Ask the LLM to triage the bug report."""
-    bug    = obs["current_bug"]
-    task   = obs["task_type"]
-    desc   = obs["task_description"]
+def get_llm_action(obs: dict) -> dict:
+    bug  = obs["current_bug"]
+    desc = obs["task_description"]
 
     existing = ""
     if obs.get("existing_bugs"):
@@ -117,14 +119,11 @@ Only fill fields relevant to the task. Set others to null."""
             stream=False,
         )
         text = (completion.choices[0].message.content or "").strip()
-        # Clean markdown if present
         text = text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
-        # Remove null values
         return {k: v for k, v in data.items() if v is not None}
     except Exception as e:
         print(f"[DEBUG] LLM call failed: {e}", flush=True)
-        # Fallback rule-based action
         return {
             "severity": "P1",
             "duplicate_of": "none",
@@ -138,25 +137,20 @@ Only fill fields relevant to the task. Set others to null."""
 
 # ── Run one episode ───────────────────────────────────────────────────────────
 
-def run_episode(client: OpenAI, task_name: str) -> dict:
-    """Run one full episode for a given task."""
+def run_episode(task_name: str) -> dict:
     rewards     = []
     steps_taken = 0
-    score       = 0.0
     success     = False
 
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        # Reset environment
         obs = http_post(f"{ENV_URL}/reset")
 
         for step in range(1, MAX_STEPS + 1):
-            # Get LLM action
-            action = get_llm_action(client, obs)
+            action     = get_llm_action(obs)
             action_str = json.dumps(action, separators=(',', ':'))
 
-            # Step environment
             try:
                 result = http_post(f"{ENV_URL}/step", action)
                 reward = float(result.get("reward", 0.0))
@@ -182,10 +176,8 @@ def run_episode(client: OpenAI, task_name: str) -> dict:
             if done:
                 break
 
-        # Calculate score
-        score   = sum(rewards) / len(rewards) if rewards else 0.0
-        score   = round(min(max(score, 0.0), 1.0), 3)
-        success = score >= SUCCESS_SCORE_THRESHOLD
+        avg_score = sum(rewards) / len(rewards) if rewards else 0.0
+        success   = avg_score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as e:
         print(f"[DEBUG] Episode error: {e}", flush=True)
@@ -194,13 +186,11 @@ def run_episode(client: OpenAI, task_name: str) -> dict:
         log_end(
             success=success,
             steps=steps_taken,
-            score=score,
             rewards=rewards,
         )
 
     return {
         "task":    task_name,
-        "score":   score,
         "success": success,
         "steps":   steps_taken,
         "rewards": rewards,
@@ -210,13 +200,6 @@ def run_episode(client: OpenAI, task_name: str) -> dict:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # Initialize OpenAI client
-    client = OpenAI(
-        base_url=API_BASE_URL,
-        api_key=API_KEY or "dummy-key",
-    )
-
-    # Get all tasks from environment
     try:
         tasks_resp = http_get(f"{ENV_URL}/tasks")
         tasks      = [t["id"] for t in tasks_resp["tasks"]]
@@ -230,15 +213,17 @@ def main():
 
     print(f"[DEBUG] Running {len(tasks)} tasks: {tasks}", flush=True)
 
-    # Run one episode per task
     all_results = []
     for task_name in tasks:
-        result = run_episode(client, task_name)
+        result = run_episode(task_name)
         all_results.append(result)
 
-    # Summary
-    avg_score = sum(r["score"] for r in all_results) / len(all_results)
-    print(f"\n[DEBUG] Average score: {avg_score:.3f}", flush=True)
+    avg = sum(
+        sum(r["rewards"]) / len(r["rewards"])
+        for r in all_results if r["rewards"]
+    ) / len(all_results)
+
+    print(f"[DEBUG] Average score: {avg:.3f}", flush=True)
     print(f"[DEBUG] All done.", flush=True)
 
 
